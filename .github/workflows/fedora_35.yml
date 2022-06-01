@@ -2,11 +2,11 @@ name: fedora_35
 
 on:
   push:
-    branches:
-      - 'master'
-      - '[0-9].[0-9]+'
-    tags:
-      - '**'
+#    branches:
+#      - 'master'
+#      - '[0-9].[0-9]+'
+#    tags:
+#      - '**'
   pull_request:
     types: [opened, reopened, synchronize, labeled]
   workflow_dispatch:
