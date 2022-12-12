@@ -31,6 +31,7 @@
 #include "cbus.h"
 
 #include <limits.h>
+#include "errinj.h"
 #include "fiber.h"
 #include "trigger.h"
 

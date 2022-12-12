@@ -76,8 +76,17 @@ enum {
 static inline void
 applier_set_state(struct applier *applier, enum applier_state state)
 {
+	// if (applier->state == state) {
+	// 	fprintf(stderr, "APPLIER_STATE: %s\n",
+	// 		applier_state_strs[state]);
+	// 	struct backtrace bt;
+	// 	backtrace_collect(&bt, fiber(), 1);
+	// 	backtrace_print(&bt, STDERR_FILENO);
+	// 	tnt_raise(ClientError, ER_INJECTION, "Stop subscribe");
+	// }
+
 	applier->state = state;
-	say_debug("=> %s", applier_state_strs[state] +
+	say_info("=> %s", applier_state_strs[state] +
 		  strlen("APPLIER_"));
 	trigger_run_xc(&applier->on_state, applier);
 }
@@ -1531,6 +1540,14 @@ applier_process_batch(struct cmsg *base)
 			stailq_last_entry(&tx->rows, struct applier_tx_row,
 					  next);
 		raft_process_heartbeat(box_raft(), applier->instance_id);
+		struct errinj *inj = errinj(ERRINJ_APPLIER_STOP, ERRINJ_INT);
+		if (inj != NULL && inj->iparam == 0) {
+			inj->iparam = 1;
+			say_info("Stopping subscribe");
+			tnt_raise(ClientError, ER_INJECTION,
+				  "Stop subscribe");
+		}
+
 		if (last_txr->row.lsn == 0) {
 			if (applier_process_heartbeat(applier, last_txr) != 0)
 				diag_raise();
@@ -1924,6 +1941,23 @@ applier_thread_data_destroy(struct applier *applier)
 	cbus_call(&thread->thread_pipe, &thread->tx_pipe, &msg.base,
 		  applier_thread_detach_applier);
 
+	struct errinj *inj = errinj(ERRINJ_APPLIER_STOP, ERRINJ_INT);
+	if (inj != NULL && inj->iparam == 1) {
+		inj->iparam = 2;
+		say_info("DESTROY YIELDING");
+
+		struct backtrace bt;
+		backtrace_collect(&bt, fiber(), 1);
+		backtrace_print(&bt, log_get_fd());
+
+		ERROR_INJECT_YIELD(ERRINJ_APPLIER_DESTROY_DELAY);
+	}
+
+	// say_info("Destroy data yielding...");
+	// ERROR_INJECT(ERRINJ_WAL_IO, {
+	// 	say_info("applier destroy is delayed");
+	//  	ERROR_INJECT_YIELD(ERRINJ_APPLIER_DESTROY_DELAY);
+	// });
 	fiber_cond_destroy(&applier->msg_cond);
 }
 

@@ -39,6 +39,7 @@
 #include "box.h"
 #include "gc.h"
 #include "error.h"
+#include "errinj.h"
 #include "raft.h"
 #include "relay.h"
 #include "sio.h"
@@ -585,6 +586,7 @@ replica_on_applier_state_f(struct trigger *trigger, void *event)
 static void
 replicaset_update(struct applier **appliers, int count, bool keep_connect)
 {
+	say_info("Replicaset update");
 	replica_hash_t uniq;
 	memset(&uniq, 0, sizeof(uniq));
 	replica_hash_new(&uniq);
@@ -649,6 +651,7 @@ replicaset_update(struct applier **appliers, int count, bool keep_connect)
 		applier_delete(applier);
 	}
 
+	say_info("Pruned old appliers");
 	replicaset.applier.total = count;
 	replicaset.applier.connected = 0;
 	replicaset.applier.loading = 0;
@@ -675,10 +678,17 @@ replicaset_update(struct applier **appliers, int count, bool keep_connect)
 			replica_clear_applier(replica);
 			replica->applier_sync_state = APPLIER_DISCONNECTED;
 		}
+		struct errinj *inj = errinj(ERRINJ_APPLIER_STOP, ERRINJ_INT);
+		if (inj != NULL && inj->iparam != -1) {
+		  say_info("ERRINJ_APPLIER_STOP: %ld", inj->iparam);
+		}
+
 		applier_stop(applier);
-		applier_delete(applier);
+                applier_delete(applier);
+		say_info("Iter");
 	}
 
+	say_info("Set replicaset.applier states");
 
 	/* Save new appliers */
 	replica_hash_foreach_safe(&uniq, replica, next) {
@@ -703,6 +713,7 @@ replicaset_update(struct applier **appliers, int count, bool keep_connect)
 	}
 	rlist_swap(&replicaset.anon, &anon_replicas);
 
+	say_info("Saved new appliers");
 	assert(replica_hash_first(&uniq) == NULL);
 	replica_hash_foreach_safe(&replicaset.hash, replica, next) {
 		if (replica_is_orphan(replica)) {
@@ -712,6 +723,9 @@ replicaset_update(struct applier **appliers, int count, bool keep_connect)
 			replica_delete(replica);
 		}
 	}
+	say_info("replicaset.connected: %d", replicaset.applier.connected);
+	say_info("replicaset.loading: %d", replicaset.applier.loading);
+	say_info("replicaset.synced: %d", replicaset.applier.synced);
 }
 
 /**
