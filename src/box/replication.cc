@@ -39,6 +39,7 @@
 #include "box.h"
 #include "gc.h"
 #include "error.h"
+#include "errinj.h"
 #include "raft.h"
 #include "relay.h"
 #include "sio.h"
@@ -656,6 +657,7 @@ replicaset_update(struct applier **appliers, int count, bool keep_connect)
 	replicaset_foreach(replica) {
 		if (replica->applier == NULL)
 			continue;
+		ERROR_INJECT_YIELD(ERRINJ_REPLICASET_UPDATE_DELAY);
 		struct replica *other = replica_hash_search(&uniq, replica);
 		if (keep_connect && other != NULL &&
 		    (replica->applier->state == APPLIER_FOLLOW ||

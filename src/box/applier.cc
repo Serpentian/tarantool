@@ -1507,6 +1507,13 @@ static const struct cmsg_hop return_route[] = {
 	{applier_thread_return_batch, NULL},
 };
 
+// static void
+// applier_thread_detach_applier(struct cbus_call_msg *base);
+
+// static const struct cmsg_hop destroy_route[] = {
+// 	{applier_thread_detach_applier, NULL},
+// };
+
 static inline int
 applier_handle_raft(struct applier *applier, struct applier_tx_row *txr)
 {
@@ -1923,6 +1930,12 @@ applier_thread_data_destroy(struct applier *applier)
 	msg.applier = applier;
 	cbus_call(&thread->thread_pipe, &thread->tx_pipe, &msg.base,
 		  applier_thread_detach_applier);
+	// cmsg_init(&msg.base, destroy_route);
+	// cpipe_push(&thread->thread_pipe, &msg.base);
+	ERROR_INJECT(ERRINJ_APPLIER_DESTROY_DELAY, {
+		say_warn("applier destroy is delayed");
+		ERROR_INJECT_YIELD(ERRINJ_APPLIER_DESTROY_DELAY);
+	});
 
 	fiber_cond_destroy(&applier->msg_cond);
 }

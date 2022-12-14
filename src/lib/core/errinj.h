@@ -75,6 +75,7 @@ struct errinj {
 #define ERRINJ_LIST(_) \
 	_(ERRINJ_APPLIER_READ_TX_ROW_DELAY, ERRINJ_BOOL, {.bparam = false})\
 	_(ERRINJ_APPLIER_SLOW_ACK, ERRINJ_BOOL, {.bparam = false}) \
+	_(ERRINJ_APPLIER_DESTROY_DELAY, ERRINJ_BOOL, {.bparam = false}) \
 	_(ERRINJ_AUTO_UPGRADE, ERRINJ_BOOL, {.bparam = false})\
 	_(ERRINJ_BUILD_INDEX, ERRINJ_INT, {.iparam = -1}) \
 	_(ERRINJ_BUILD_INDEX_DELAY, ERRINJ_BOOL, {.bparam = false}) \
@@ -116,6 +117,7 @@ struct errinj {
 	_(ERRINJ_RELAY_REPORT_INTERVAL, ERRINJ_DOUBLE, {.dparam = 0}) \
 	_(ERRINJ_RELAY_SEND_DELAY, ERRINJ_BOOL, {.bparam = false}) \
 	_(ERRINJ_RELAY_TIMEOUT, ERRINJ_DOUBLE, {.dparam = 0}) \
+	_(ERRINJ_REPLICASET_UPDATE_DELAY, ERRINJ_BOOL, {.bparam = false}) \
 	_(ERRINJ_REPLICASET_VCLOCK, ERRINJ_BOOL, {.bparam = false}) \
 	_(ERRINJ_REPLICA_JOIN_DELAY, ERRINJ_BOOL, {.bparam = false}) \
 	_(ERRINJ_SIO_READ_MAX, ERRINJ_INT, {.iparam = -1}) \
