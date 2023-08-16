@@ -34,6 +34,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <small/rlist.h>
+#include <tarantool_ev.h>
 
 #include "fiber_cond.h"
 #include "vclock/vclock.h"
@@ -52,6 +53,32 @@ enum { GC_NAME_MAX = 64 };
 typedef rb_node(struct gc_consumer) gc_node_t;
 
 /**
+ * The following structure represents a checkpoint reference.
+ * See also gc_checkpoint::refs.
+ */
+struct gc_checkpoint_ref {
+	/** Link in gc_checkpoint::refs. */
+	struct rlist in_refs;
+	/** Human-readable name of this checkpoint reference. */
+	char name[GC_NAME_MAX];
+};
+
+struct gc_retention_delay {
+	/** Timer armed to protect checkpoint from deletion. */
+	struct ev_timer timer;
+	/**
+	 * If retention timer is in progress, this points to the
+	 * gc reference object that prevents the garbage collector
+	 * from deleting the checkpoint files that may be needed by
+	 * anonymous replicas. Is needed in order to be visible
+	 * inside box.info.gc.
+	 */
+	struct gc_checkpoint_ref ref;
+	/** Is retention time passed */
+	bool is_ended;
+};
+
+/**
  * Garbage collector keeps track of all preserved checkpoints.
  * The following structure represents a checkpoint.
  */
@@ -68,18 +95,10 @@ struct gc_checkpoint {
 	 * that we can list reference names in box.info.gc().
 	 */
 	struct rlist refs;
+	/** Retention structure, which protects checkpoint from deletion. */
+	struct gc_retention_delay retention;
 };
 
-/**
- * The following structure represents a checkpoint reference.
- * See also gc_checkpoint::refs.
- */
-struct gc_checkpoint_ref {
-	/** Link in gc_checkpoint::refs. */
-	struct rlist in_refs;
-	/** Human-readable name of this checkpoint reference. */
-	char name[GC_NAME_MAX];
-};
 
 /**
  * The object of this type is used to prevent garbage
@@ -167,6 +186,10 @@ struct gc_state {
 	 */
 	double wal_cleanup_delay;
 	/**
+	 * Delay gc of checkpoint in seconds.
+	 */
+	double wal_retention_delay;
+	/**
 	 * When set the cleanup fiber is paused.
 	 */
 	bool is_paused;
@@ -234,6 +257,12 @@ gc_free(void);
  */
 void
 gc_set_wal_cleanup_delay(double wal_cleanup_delay);
+
+/*
+ * Set a new retention delay value.
+ */
+void
+gc_set_wal_retention_delay(double wal_retention_delay);
 
 /**
  * Increment a reference to delay counter.

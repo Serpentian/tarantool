@@ -111,6 +111,7 @@ gc_init(on_garbage_collection_f on_garbage_collection)
 	gc.delay_ref = 0;
 	gc.is_paused = true;
 	say_info("wal/engine cleanup is paused");
+	gc.wal_retention_delay = 0;
 
 	vclock_create(&gc.vclock);
 	rlist_create(&gc.checkpoints);
@@ -158,6 +159,38 @@ gc_free(void)
 	}
 }
 
+static void
+gc_retention_delay_cb(ev_loop *loop, struct ev_timer *timer, int revents)
+{
+	(void)loop;
+	(void)revents;
+	struct gc_retention_delay *retention = container_of(
+		timer, struct gc_retention_delay, timer);
+	gc_unref_checkpoint(&retention->ref);
+	retention->is_ended = true;
+}
+
+/**
+ * Returns 0, when no retention is needed, -1 -- retention is in progress
+ */
+static int
+gc_retention_delay(struct gc_checkpoint *checkpoint)
+{
+	struct gc_retention_delay *retention = &checkpoint->retention;
+	/* Retention is not needed or it has already ended */
+	if (gc.wal_retention_delay == 0 || retention->is_ended)
+		return 0;
+	/* Timer is working right now. Checkpoint deletion is forbidden */
+	if (ev_is_active(&retention->timer) || ev_is_pending(&retention->timer))
+		return -1;
+
+	ev_timer_init(&retention->timer, gc_retention_delay_cb,
+		      gc.wal_retention_delay, 0);
+	gc_ref_checkpoint(checkpoint, &retention->ref, "wal_retention_delay");
+	ev_timer_start(loop(), &retention->timer);
+	return -1;
+}
+
 /**
  * Invoke garbage collection in order to remove files left
  * from old checkpoints. The number of checkpoints saved by
@@ -183,6 +216,8 @@ gc_run_cleanup(void)
 			break;
 		if (!rlist_empty(&checkpoint->refs))
 			break; /* checkpoint is in use */
+		if (gc_retention_delay(checkpoint) < 0)
+			break;
 		rlist_del_entry(checkpoint, in_checkpoints);
 		gc_checkpoint_delete(checkpoint);
 		gc.checkpoint_count--;
@@ -338,6 +373,29 @@ gc_delay_unref(void)
 		if (gc.delay_ref == 0) {
 			gc.is_paused = false;
 			fiber_wakeup(gc.cleanup_fiber);
+		}
+	}
+}
+
+void
+gc_set_wal_retention_delay(double wal_retention_delay)
+{
+	double old_delay = gc.wal_retention_delay;
+	gc.wal_retention_delay = wal_retention_delay;
+	if (old_delay != wal_retention_delay) {
+		struct gc_checkpoint *checkpoint;
+		gc_foreach_checkpoint(checkpoint) {
+			ev_timer* timer = &checkpoint->retention.timer;
+			/** Restart all working timers with new timeout*/
+			if (ev_is_active(timer) || ev_is_pending(timer)) {
+				ev_timer_stop(loop(), timer);
+				ev_timer_set(timer, gc.wal_retention_delay, 0);
+				gc_ref_checkpoint(checkpoint,
+						  &checkpoint->retention.ref,
+						  "wal_retention_delay");
+				ev_timer_start(loop(),
+					       &checkpoint->retention.timer);
+			}
 		}
 	}
 }

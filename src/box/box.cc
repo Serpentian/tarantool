@@ -1607,6 +1607,19 @@ box_check_wal_cleanup_delay(void)
 	return value;
 }
 
+static double
+box_check_wal_retention_delay(void)
+{
+	double value = cfg_getd("wal_retention_delay");
+	if (value < 0) {
+		diag_set(ClientError, ER_CFG, "wal_retention_delay",
+			 "value must be >= 0");
+		return -1;
+	}
+
+	return value;
+}
+
 static void
 box_check_readahead(int readahead)
 {
@@ -1895,6 +1908,8 @@ box_check_config(void)
 	if (box_check_wal_queue_max_size() < 0)
 		diag_raise();
 	if (box_check_wal_cleanup_delay() < 0)
+		diag_raise();
+	if (box_check_wal_retention_delay() < 0)
 		diag_raise();
 	if (box_check_memory_quota("memtx_memory") < 0)
 		diag_raise();
@@ -3100,6 +3115,16 @@ box_set_wal_cleanup_delay(void)
 	if (box_is_anon())
 		delay = 0;
 	gc_set_wal_cleanup_delay(delay);
+	return 0;
+}
+
+int
+box_set_wal_retention_delay(void)
+{
+	double delay = box_check_wal_retention_delay();
+	if (delay < 0)
+		return -1;
+	gc_set_wal_retention_delay(delay);
 	return 0;
 }
 

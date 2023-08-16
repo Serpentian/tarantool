@@ -170,6 +170,8 @@ cfg_filter(box.cfg)
     - write
   - - wal_queue_max_size
     - 16777216
+  - - wal_retention_delay
+    - 0
   - - worker_pool_threads
     - 4
 ...
