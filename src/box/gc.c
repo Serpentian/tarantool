@@ -101,6 +101,13 @@ gc_checkpoint_delete(struct gc_checkpoint *checkpoint)
 	free(checkpoint);
 }
 
+static void
+gc_xlog_ref_delete(struct gc_xlog_ref *ref)
+{
+	TRASH(ref);
+	free(ref);
+}
+
 void
 gc_init(on_garbage_collection_f on_garbage_collection)
 {
@@ -111,9 +118,11 @@ gc_init(on_garbage_collection_f on_garbage_collection)
 	gc.delay_ref = 0;
 	gc.is_paused = true;
 	say_info("wal/engine cleanup is paused");
+	gc.wal_retention_delay = 0;
 
 	vclock_create(&gc.vclock);
 	rlist_create(&gc.checkpoints);
+	rlist_create(&gc.xlog_refs);
 	gc_tree_new(&gc.consumers);
 	fiber_cond_create(&gc.cleanup_cond);
 	checkpoint_schedule_cfg(&gc.checkpoint_schedule, 0, 0);
@@ -156,6 +165,33 @@ gc_free(void)
 		gc_consumer_delete(consumer);
 		consumer = next;
 	}
+}
+
+static void
+gc_retention_delay_cb(ev_loop *loop, struct ev_timer *timer, int revents)
+{
+	(void)loop;
+	(void)timer;
+	(void)revents;
+}
+
+int
+gc_add_xlog_ref(const struct vclock *vclock, const char *name)
+{
+	struct gc_xlog_ref *xlog_ref = calloc(1, sizeof(*xlog_ref));
+	if (xlog_ref == NULL) {
+		diag_set(OutOfMemory, sizeof(*xlog_ref),
+			 "malloc", "struct xlog_ref");
+		return -1;
+	}
+
+	strlcpy(xlog_ref->filename, name, PATH_MAX);
+	vclock_copy(&xlog_ref->vclock, vclock);
+	rlist_add_tail_entry(&gc.xlog_refs, xlog_ref, in_xlog_refs);
+	ev_timer_init(&xlog_ref->timer, gc_retention_delay_cb,
+		      gc.wal_retention_delay, 0);
+	ev_timer_start(loop(), &xlog_ref->timer);
+	return 0;
 }
 
 /**
@@ -211,6 +247,19 @@ gc_run_cleanup(void)
 		 */
 		vclock_min_ignore0(&min_vclock, &consumer->vclock);
 		consumer = gc_tree_next(&gc.consumers, consumer);
+	}
+
+	struct gc_xlog_ref *xlog_ref, *xlog_ref_next;
+	rlist_foreach_entry_safe(xlog_ref, &gc.xlog_refs, in_xlog_refs,
+				 xlog_ref_next) {
+		struct ev_timer *timer = &xlog_ref->timer;
+		if (ev_is_active(timer) || ev_is_pending(timer)) {
+			vclock_min_ignore0(&min_vclock, &xlog_ref->vclock);
+			break;
+		}
+
+		rlist_del_entry(xlog_ref, in_xlog_refs);
+		gc_xlog_ref_delete(xlog_ref);
 	}
 
 	if (vclock_sum(&min_vclock) > vclock_sum(&gc.vclock)) {
@@ -339,6 +388,61 @@ gc_delay_unref(void)
 			gc.is_paused = false;
 			fiber_wakeup(gc.cleanup_fiber);
 		}
+	}
+}
+
+void
+gc_set_wal_retention_delay(double wal_retention_delay)
+{
+	double old_delay = gc.wal_retention_delay;
+	gc.wal_retention_delay = wal_retention_delay;
+	if (old_delay == gc.wal_retention_delay)
+		return;
+
+	/**
+	 * Instance restart or reconfiguration from 0. Figure
+	 * out, how much time time passed, since closing each xlog.
+	 * Use "new_timeout - passed" delay, where it's needed.
+	 */
+	if (old_delay == 0) {
+		gc_init_wal_retention_delay();
+		return;
+	}
+
+	/** Otherwise reconfigure xlog gc delay, if they're not ended. */
+	struct gc_xlog_ref *xlog_ref, *xlog_ref_next;
+	rlist_foreach_entry_safe(xlog_ref, &gc.xlog_refs, in_xlog_refs,
+				 xlog_ref_next) {
+		struct ev_timer *timer = &xlog_ref->timer;
+		if (ev_is_active(timer) || ev_is_pending(timer)) {
+			double remaining = ev_timer_remaining(loop(), timer);
+			ev_timer_stop(loop(), timer);
+			ev_timer_set(timer, gc.wal_retention_delay, 0);
+			ev_timer_start(loop(), timer);
+			continue;
+		}
+
+		rlist_del_entry(xlog_ref, in_xlog_refs);
+		gc_xlog_ref_delete(xlog_ref);
+
+	}
+}
+
+void
+gc_init_wal_retention_delay(struct xdir *wal_dir)
+{
+	if (gc.wal_retention_delay == 0)
+		return;
+
+	struct vclock *vclock = vclockset_first(&wal_dir->index);
+	if (vclock == NULL)
+		return;
+
+	struct vclock *last = vclockset_last(&wal_dir->index);
+	while (vclock != last) {
+		gc_add_xlog_ref(vclock, xdir_format_filename(wal_dir,
+				vclock_sum(vclock), NONE));
+		vclock = vclockset_next(&wal_dir->index, vclock);
 	}
 }
 

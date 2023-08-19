@@ -573,6 +573,22 @@ lbox_info_gc_call(struct lua_State *L)
 	}
 	lua_settable(L, -3);
 
+	lua_pushstring(L, "wal_retention_delay");
+	lua_newtable(L);
+
+	count = 0;
+	struct gc_xlog_ref *xlog_ref;
+	rlist_foreach_entry(xlog_ref, &gc.xlog_refs, in_xlog_refs) {
+		lua_createtable(L, 0, 1);
+
+		lua_pushstring(L, "xlog");
+		lua_pushstring(L, xlog_ref->filename);
+		lua_settable(L, -3);
+
+		lua_rawseti(L, -2, ++count);
+	}
+	lua_settable(L, -3);
+
 	return 1;
 }
 

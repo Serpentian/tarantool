@@ -130,6 +130,9 @@ wal_free(void);
 const char *
 wal_dir(void);
 
+cons xlog *
+wal_xdir(void);
+
 struct wal_watcher_msg {
 	struct cmsg cmsg;
 	struct wal_watcher *watcher;

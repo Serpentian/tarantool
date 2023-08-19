@@ -34,7 +34,9 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <small/rlist.h>
+#include <tarantool_ev.h>
 
+#include "xlog.h"
 #include "fiber_cond.h"
 #include "vclock/vclock.h"
 #include "trivia/util.h"
@@ -79,6 +81,21 @@ struct gc_checkpoint_ref {
 	struct rlist in_refs;
 	/** Human-readable name of this checkpoint reference. */
 	char name[GC_NAME_MAX];
+};
+
+/**
+ * The following structure represents a xlog reference, which protects
+ * xlog from being garbage collected. See also gc_state::xlog_refs.
+ */
+struct gc_xlog_ref {
+	/** Link in gc_state::xlog_refs */
+	struct rlist in_xlog_refs;
+	/** Timer armed to protect checkpoint from deletion. */
+	struct ev_timer timer;
+	/** First vclock of xlog, which is protected from gc. */
+	struct vclock vclock;
+	/** Xlog file name (for box.info.gc). */
+	char filename[PATH_MAX];
 };
 
 /**
@@ -166,6 +183,14 @@ struct gc_state {
 	 * Delay timeout in seconds.
 	 */
 	double wal_cleanup_delay;
+	/** Delay garbage collecting of xlog in seconds. */
+	double wal_retention_delay;
+	/**
+	 * List of xlog refs, protected from gc. New xlogs are added to the tail
+	 * after xlog closing. The list is always ordered in ascending order of
+	 * vclocks. Linked by gc_xlog_ref::in_xlog_refs.
+	 */
+	struct rlist xlog_refs;
 	/**
 	 * When set the cleanup fiber is paused.
 	 */
@@ -234,6 +259,18 @@ gc_free(void);
  */
 void
 gc_set_wal_cleanup_delay(double wal_cleanup_delay);
+
+/*
+ * Set a new retention delay value.
+ */
+void
+gc_set_wal_retention_delay(double wal_retention_delay);
+
+int
+gc_add_xlog_ref(const struct vclock *vclock, const char* name);
+
+void
+gc_init_wal_retention_delay(struct xdir *wal_dir);
 
 /**
  * Increment a reference to delay counter.

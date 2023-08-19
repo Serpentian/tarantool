@@ -147,6 +147,7 @@ local default_cfg = {
     wal_dir_rescan_delay= 2,
     wal_queue_max_size  = 16 * 1024 * 1024,
     wal_cleanup_delay   = 4 * 3600,
+    wal_retention_delay = 0,
     wal_ext             = ifdef_wal_ext(nil),
     force_recovery      = false,
     replication         = nil,
@@ -341,6 +342,7 @@ local template_cfg = {
     wal_max_size        = 'number',
     wal_dir_rescan_delay= 'number',
     wal_cleanup_delay   = 'number',
+    wal_retention_delay = 'number',
     wal_ext             = ifdef_wal_ext('table'),
     force_recovery      = 'boolean',
     replication         = 'string, number, table',
@@ -489,6 +491,7 @@ local dynamic_cfg = {
     -- do nothing, affects new replicas, which query this value on start
     wal_dir_rescan_delay    = nop,
     wal_cleanup_delay       = private.cfg_set_wal_cleanup_delay,
+    wal_retention_delay     = private.cfg_set_wal_retention_delay,
     custom_proc_title       = function()
         require('title').update(box.cfg.custom_proc_title)
     end,

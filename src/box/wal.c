@@ -38,6 +38,7 @@
 
 #include "xlog.h"
 #include "xrow.h"
+#include "gc.h"
 #include "vy_log.h"
 #include "cbus.h"
 #include "coio_task.h"
@@ -212,6 +213,13 @@ wal_dir(void)
 {
 	return wal_writer_singleton.wal_dir.dirname;
 }
+
+const xlog *
+wal_xdir(void)
+{
+	return wal_writer_singletone.wal_dir;
+}
+
 
 static void
 wal_write_to_disk(struct cmsg *msg);
@@ -666,7 +674,9 @@ wal_begin_checkpoint_f(struct cbus_call_msg *data)
 	if (xlog_is_open(&writer->current_wal) &&
 	    vclock_sum(&writer->current_wal.meta.vclock) !=
 	    vclock_sum(&writer->vclock)) {
-
+		if (gc_add_xlog_ref(&writer->current_wal.meta.vclock,
+				    writer->current_wal.filename) != 0)
+			return -1;
 		xlog_close(&writer->current_wal, false);
 		/*
 		 * The next WAL will be created on the first write.
@@ -841,6 +851,9 @@ wal_opt_rotate(struct wal_writer *writer)
 	 */
 	if (xlog_is_open(&writer->current_wal) &&
 	    writer->current_wal.offset >= writer->wal_max_size) {
+		if (gc_add_xlog_ref(&writer->current_wal.meta.vclock,
+				    writer->current_wal.filename) != 0)
+			return -1;
 		/*
 		 * We can not handle xlog_close()
 		 * failure in any reasonable way.
