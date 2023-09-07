@@ -1210,6 +1210,34 @@ relay_push_raft(struct relay *relay, const struct raft_request *req)
 	relay_push_raft_msg(relay);
 }
 
+static int
+xrow_decode_dml_space_id(const struct xrow_header *row, uint32_t *space_id)
+{
+	if (row->bodycnt == 0) {
+		return -1;
+	}
+
+	assert(row->bodycnt == 1);
+	const char *data = (const char *) row->body[0].iov_base;
+	if (mp_typeof(*data) != MP_MAP)
+		return -1;
+
+	/** Skip map size. */
+	data += 1;
+
+	/** Decode space_id. */
+	uint64_t key = mp_decode_uint(&data);
+	const char *value = data;
+	mp_next(&data);
+	if (key < iproto_key_MAX &&
+	    iproto_key_type[key] != mp_typeof(*value))
+		return -1;
+
+	assert(key == IPROTO_SPACE_ID);
+	*space_id = mp_decode_uint(&value);
+	return 0;
+}
+
 /** Send a single row to the client. */
 static void
 relay_send_row(struct xstream *stream, struct xrow_header *packet)
@@ -1240,6 +1268,11 @@ relay_send_row(struct xstream *stream, struct xrow_header *packet)
 	}
 	assert(iproto_type_is_dml(packet->type) ||
 	       iproto_type_is_synchro_request(packet->type));
+
+	uint32_t space_id = 0;
+	xrow_decode_dml_space_id(packet, &space_id);
+	say_info("SPACE_ID: %" PRIu32, space_id);
+
 	/* Check if the rows from the instance are filtered. */
 	if ((1 << packet->replica_id & relay->id_filter) != 0)
 		return;
