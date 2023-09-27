@@ -7,6 +7,7 @@ local ffi = require('ffi')
 local fun = require('fun')
 local utils = require('internal.utils')
 local mkversion = require('internal.mkversion')
+local trigger = require('internal.trigger')
 
 ffi.cdef([[
     void box_init_latest_dd_version_id(uint32_t version_id);
@@ -137,6 +138,11 @@ local function get_snapshot_version(snap_dir)
         end
     end
     return version
+end
+
+local _on_schema_upgrade = trigger.new('_on_schema_upgrade')
+local function on_schema_upgrade(new_func, old_func)
+    return _on_schema_upgrade(new_func, old_func)
 end
 
 --------------------------------------------------------------------------------
@@ -1523,6 +1529,9 @@ local function upgrade_from(version)
                                    handler.version.major,
                                    handler.version.minor,
                                    handler.version.patch})
+        log.info('OLD: %s', version)
+        log.info('NEW: %s', handler.version)
+        _on_schema_upgrade:run(version, handler.version)
         ::continue::
     end
 end
@@ -2137,3 +2146,5 @@ box.internal.clear_recovery_triggers = clear_recovery_triggers;
 -- Export the run_upgrade() helper to let users perform schema upgrade
 -- manually in case box.schema.upgrade() failed.
 box.internal.run_schema_upgrade = run_upgrade
+-- Allows to run DDL after schema upgrade.
+box.internal.on_schema_upgrade = on_schema_upgrade
