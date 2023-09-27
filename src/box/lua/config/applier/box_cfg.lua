@@ -1,5 +1,6 @@
 local fio = require('fio')
 local log = require('internal.config.utils.log')
+local mkversion = require('internal.mkversion')
 local instance_config = require('internal.config.instance_config')
 
 local function peer_uri(configdata, peer_name)
@@ -115,6 +116,65 @@ end
 local function has_snapshot(configdata)
     local pattern = fio.pathjoin(effective_snapshot_dir(configdata), '*.snap')
     return #fio.glob(pattern) > 0
+end
+
+local function apply_names_on_upgrade(names, is_rw)
+    local version = mkversion.get()
+    local version_3 = mkversion(3, 0, 0)
+    if version >=  version_3 then
+        return
+    end
+
+    local box_cfg_fiber = nil
+
+    --if not is_rw then
+        -- Name setting is not DDL, we can do it on replica in trigger.
+        box.space._schema:on_replace(function(old, new)
+            if old == nil or new == nil then
+                return
+            end
+
+            require('log').warn('NON_NULL_TRIGGER')
+            local old_version = mkversion.from_tuple(old)
+            local new_version = mkversion.from_tuple(new)
+            if old_version < version_3 and new_version >= version_3 then
+                -- box.on_commit(function()
+                --     local ok = pcall(box.cfg, {
+                --         instance_name = names.instance_name,
+                --         replicaset_name = is_rw and names.replicaset_name or nil,
+                --     })
+
+                --     if not ok then
+                --         require('log').warn('FAILED TO SET NAMES')
+                --     end
+                -- end)
+
+                -- box.cfg({instance_name = names.instance_name})
+
+                -- box_cfg_fiber = require('fiber').new(function()
+                --     return pcall(box.cfg, {
+                --         instance_name = names.instance_name,
+                --         replicaset_name = is_rw and names.replicaset_name or nil,
+                --     })
+                -- end)
+            end
+
+            if box_cfg_fiber then
+                box_cfg_fiber:set_joinable(true)
+                box_cfg_fiber:join()
+            end
+        end)
+        return
+    -- end
+
+    -- box.internal.on_schema_upgrade(function(old, new)
+    --     if (old < version_3 and new >= version_3) then
+    --         box.cfg{
+    --             instance_name = names.instance_name,
+    --             replicaset_name = names.replicaset_name,
+    --         }
+    --     end
+    -- end)
 end
 
 -- Returns nothing or {needs_retry = true}.
@@ -395,6 +455,7 @@ local function apply(config)
 
         log.debug('box_cfg.apply (startup): %s', box_cfg)
         box.cfg(box_cfg)
+        apply_names_on_upgrade(names, configured_as_rw)
 
         -- NB: needs_retry should be true when force_read_only is
         -- true. It is so by construction.
@@ -404,6 +465,9 @@ local function apply(config)
     -- If it is reload, just apply the new configuration.
     log.debug('box_cfg.apply: %s', box_cfg)
     box.cfg(box_cfg)
+    if is_startup then
+        apply_names_on_upgrade(names)
+    end
 end
 
 return {

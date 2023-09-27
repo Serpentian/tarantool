@@ -1500,9 +1500,11 @@ box_check_node_name(char *out, const char *cfg_name, bool set_diag)
 	 * on the lower schema.
 	 */
 	if (name == NULL || dd_version_id < 196608) {
+		say_warn("SKIPPED name %s", cfg_name);
 		*out = 0;
 		return 0;
 	}
+	say_warn("NOT SKIPPED name %s, id: %d", cfg_name, dd_version_id);
 	/* Nil name is allowed as Lua box.NULL or nil. Not as "". */
 	if (!node_name_is_valid(name)) {
 		if (set_diag) {
