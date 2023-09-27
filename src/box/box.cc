@@ -1494,7 +1494,12 @@ static int
 box_check_node_name(char *out, const char *cfg_name, bool set_diag)
 {
 	const char *name = cfg_gets(cfg_name);
-	if (name == NULL) {
+	/**
+	 * If schema version is less then 3.0.0, then we consider setting name
+	 * as NoOp in order to allow painless configuration of Tarantool 3.0
+	 * on the lower schema.
+	 */
+	if (name == NULL || dd_version_id < 196608) {
 		*out = 0;
 		return 0;
 	}
@@ -1551,6 +1556,13 @@ box_check_bootstrap_leader(struct uri *uri, struct tt_uuid *uuid, char *name)
 	/* Not a uri. Try uuid then. */
 	if (box_check_uuid(uuid, "bootstrap_leader", false) == 0)
 		return 0;
+	/* If schema version is less then 3.0.0. */
+	if (dd_version_id < 96608) {
+		diag_set(ClientError, ER_CFG, "bootstrap_leader",
+			 "the name is not supported. Please, consider "
+			 "upgrading schema");
+		return -1;
+	}
 	if (box_check_node_name(name, "bootstrap_leader", false) == 0)
 		return 0;
 	diag_set(ClientError, ER_CFG, "bootstrap_leader",
