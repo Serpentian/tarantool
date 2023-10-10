@@ -1,5 +1,6 @@
 local fio = require('fio')
 local fiber = require('fiber')
+local xlog = require('xlog')
 local log = require('internal.config.utils.log')
 local instance_config = require('internal.config.instance_config')
 
@@ -118,9 +119,96 @@ local function has_snapshot(configdata)
     return #fio.glob(pattern) > 0
 end
 
+-- Determine the name of the snapshot, which will be used for recovery, 
+-- based on configuration. has_snapshot() must be true.
+--
+-- To be called before first box.cfg().
+local function effective_snapshot_name(configdata)
+    local snap_dir = effective_snapshot_dir(configdata)
+    local glob = fio.glob(fio.pathjoin(snap_dir, '*.snap'))
+
+    -- At least one snapshot file must be in the WAL dir.
+    assert(#glob > 0)
+
+    table.sort(glob)
+    return fio.pathjoin(snap_dir, glob[#glob])
+end
+
+-- Hardcoded space IDs, used to determine the names, persisted
+-- in snapshot. Don't determine IDs dynamically, as it's needed
+-- to read xlog file twice: getting IDs from _space and only after
+-- that getting names from _schema and _cluster. It's anyway
+-- hardcoded in box/schema_def.h.
+local space_ids = {
+    '_schema'  = 272,
+    '_cluster' = 320,
+}
+
+-- Get all saved names with associated UUIDs from the snapshot 
+-- file, used for recovery. Returns a map:
+-- {replicaset = {UUID -> name}, replicas = {UUID -> name}}
+-- UUID are always returned, names can be nil if not set.
+--
+-- To be called before first box.cfg().
+local function persisted_names(configdata)
+    local replicas = {}
+    local replicaset_name, replicaset_uuid
+    local snap_name = effective_snapshot_name(configdata)
+    for _, row in xlog.pairs(snap_name) do 
+        local body = row.BODY
+        if body.space_id == space_ids._schema then
+            if body.tuple[1] == 'replicaset_uuid' then
+                replicaset_uuid = body.tuple[2]
+            elseif body.tuple[1] == 'replicaset_name' then
+                replicaset_name = body.tuple[2]
+            end
+        elseif body.space_id == space_ids._cluster then
+            table.insert(replicas, {
+                instance_uuid = body.tuple[2],
+                instance_name = body.tuple[3],
+            })
+        end
+    end
+
+    return {
+        replicaset_name = replicaset_name,
+        replicaset_uuid = replicaset_uuid,
+        replicas = replicas
+    }
+end
+
+local function check_name(config, persisted, name)
+end
+
+local function check_names(configdata)
+    local persisted = persisted_names(configdata)
+    assert(persisted.replicaset_uuid)
+    assert(#persisted.replicas > 0)
+
+    local config = configdata:names()
+    assert(config.replicaset_name ~= nil)
+    assert(config.instance_name ~= nil)
+
+    if config.replicaset_uuid ~= nil &&
+        config.replicaset_uuid ~= persisted.replicaset_uuid then
+            error('replicaset uuid mismatch')
+    end
+
+    
+end
+
+local function apply_names(box_cfg, configdata)
+    local names = configdata:names()
+    box_cfg.instance_name = names.instance_name
+    box_cfg.replicaset_name = names.replicaset_name
+    box_cfg.instance_uuid = names.instance_uuid
+    box_cfg.replicaset_uuid = names.replicaset_uuid
+end
+
 -- Returns nothing or {needs_retry = true}.
 local function apply(config)
     local configdata = config._configdata
+    local has_snap = has_snapshot(configdata)
     local box_cfg = configdata:filter(function(w)
         return w.schema.box_cfg ~= nil
     end, {use_default = true}):map(function(w)
@@ -266,7 +354,7 @@ local function apply(config)
         local am_i_bootstrap_leader = false
         if is_startup then
             local instance_name = configdata:names().instance_name
-            am_i_bootstrap_leader = not has_snapshot(configdata) and
+            am_i_bootstrap_leader = not has_snap and
                 instance_name == configdata:bootstrap_leader_name()
             box_cfg.read_only = not am_i_bootstrap_leader
         end
@@ -331,11 +419,11 @@ local function apply(config)
     -- Persist a replicaset name to protect a user from attempt to
     -- mix instances with data from different replicasets into one
     -- replicaset.
-    local names = configdata:names()
-    box_cfg.instance_name = names.instance_name
-    box_cfg.replicaset_name = names.replicaset_name
-    box_cfg.instance_uuid = names.instance_uuid
-    box_cfg.replicaset_uuid = names.replicaset_uuid
+    if has_snap then 
+        check_names(configdata)
+    else
+        apply_names(box_cfg, configdata)
+    end
 
     -- Set bootstrap_leader option.
     box_cfg.bootstrap_leader = configdata:bootstrap_leader()
@@ -382,7 +470,6 @@ local function apply(config)
     if is_startup and failover ~= 'election' and failover ~= 'supervised' then
         local configured_as_rw = not box_cfg.read_only
         local in_replicaset = #configdata:peers() > 1
-        local has_snap = has_snapshot(configdata)
 
         -- Require at least one writable instance in the
         -- replicaset if the instance is to be bootstrapped (has
