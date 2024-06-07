@@ -35,6 +35,7 @@
 
 #include "diag.h"
 #include "error.h"
+#include "xrow.h"
 
 #if defined(__cplusplus)
 extern "C" {
@@ -313,6 +314,12 @@ struct engine_read_view {
 };
 
 struct engine_join_ctx {
+	/** Vclock to respond for the join request with. */
+	struct vclock *vclock;
+	/** Raft state to send during JOIN_META. */
+	struct raft_request raft_req;
+	/** Limbo state to send during JOIN_META. */
+	struct synchro_request synchro_req;
 	/** Array of engine join contexts, one per each engine. */
 	void **array;
 };
@@ -451,10 +458,11 @@ int
 engine_end_recovery(void);
 
 int
-engine_prepare_join(struct engine_join_ctx *ctx);
+engine_prepare_join(struct engine_join_ctx *ctx, struct vclock *vclock);
 
 int
-engine_join(struct engine_join_ctx *ctx, struct xstream *stream);
+engine_join(struct engine_join_ctx *ctx, struct xstream *stream,
+	    uint32_t replica_version_id);
 
 void
 engine_complete_join(struct engine_join_ctx *ctx);
@@ -604,16 +612,17 @@ engine_end_recovery_xc(void)
 }
 
 static inline void
-engine_prepare_join_xc(struct engine_join_ctx *ctx)
+engine_prepare_join_xc(struct engine_join_ctx *ctx, struct vclock *vclock)
 {
-	if (engine_prepare_join(ctx) != 0)
+	if (engine_prepare_join(ctx, vclock) != 0)
 		diag_raise();
 }
 
 static inline void
-engine_join_xc(struct engine_join_ctx *ctx, struct xstream *stream)
+engine_join_xc(struct engine_join_ctx *ctx, struct xstream *stream,
+	       uint32_t replica_version_id)
 {
-	if (engine_join(ctx, stream) != 0)
+	if (engine_join(ctx, stream, replica_version_id) != 0)
 		diag_raise();
 }
 

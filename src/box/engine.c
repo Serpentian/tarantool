@@ -36,7 +36,12 @@
 
 #include "errinj.h"
 #include "fiber.h"
+#include "iproto_constants.h"
+#include "raft.h"
 #include "small/rlist.h"
+#include "txn_limbo.h"
+#include "wal.h"
+#include "xstream.h"
 
 RLIST_HEAD(engines);
 
@@ -212,7 +217,7 @@ engine_backup(const struct vclock *vclock, engine_backup_cb cb, void *cb_arg)
 }
 
 int
-engine_prepare_join(struct engine_join_ctx *ctx)
+engine_prepare_join(struct engine_join_ctx *ctx, struct vclock *vclock)
 {
 	ctx->array = calloc(MAX_ENGINE_COUNT, sizeof(void *));
 	if (ctx->array == NULL) {
@@ -220,6 +225,32 @@ engine_prepare_join(struct engine_join_ctx *ctx)
 			 "malloc", "engine join context");
 		return -1;
 	}
+
+	if (vclock != NULL) {
+		/*
+		 * Sync WAL to make sure that all changes visible from
+		 * the frozen read view are successfully committed and
+		 * obtain corresponding vclock.
+		*/
+		if (wal_sync(vclock) != 0)
+			return -1;
+		ctx->vclock = vclock;
+	}
+
+	/*
+	 * Start sending data only when the latest sync
+	 * transaction is confirmed.
+	 */
+	if (txn_limbo_wait_confirm(&txn_limbo) != 0)
+		return -1;
+
+	struct synchro_request req;
+	struct raft_request raft_req;
+	struct vclock limbo_vclock;
+	txn_limbo_checkpoint(&txn_limbo, &req, &limbo_vclock);
+	box_raft_checkpoint_local(&raft_req);
+
+	/* Prepare context for every engine. */
 	int i = 0;
 	struct engine *engine;
 	engine_foreach(engine) {
@@ -235,9 +266,39 @@ fail:
 }
 
 int
-engine_join(struct engine_join_ctx *ctx, struct xstream *stream)
+engine_join(struct engine_join_ctx *ctx, struct xstream *stream,
+	    uint32_t replica_version_id)
 {
 	ERROR_INJECT_YIELD(ERRINJ_ENGINE_JOIN_DELAY);
+
+	/* Respond to the JOIN request with the current vclock. */
+	struct xrow_header row;
+	size_t region_svp = region_used(&fiber()->gc);
+	xrow_encode_vclock(&row, ctx->vclock);
+	xstream_write(stream, &row);
+
+	/*
+	 * Version is present starting with 2.7.3, 2.8.2, 2.9.1
+	 * All these versions know of additional META stage of initial join.
+	 */
+	if (replica_version_id > 0) {
+		/* Mark the beginning of the metadata stream. */
+		xrow_encode_type(&row, IPROTO_JOIN_META);
+		xstream_write(stream, &row);
+
+		xrow_encode_raft(&row, &fiber()->gc, &ctx->raft_req);
+		xstream_write(stream, &row);
+
+		char body[XROW_BODY_LEN_MAX];
+		xrow_encode_synchro(&row, body, &ctx->synchro_req);
+		row.replica_id = ctx->synchro_req.replica_id;
+		xstream_write(stream, &row);
+
+		/* Mark the end of the metadata stream. */
+		xrow_encode_type(&row, IPROTO_JOIN_SNAPSHOT);
+		xstream_write(stream, &row);
+	}
+	region_truncate(&fiber()->gc, region_svp);
 
 	int i = 0;
 	struct engine *engine;
