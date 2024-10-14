@@ -440,15 +440,17 @@ raft_process_recovery(struct raft *raft, const struct raft_msg *req)
 	/*
 	 * Role is never persisted. If recovery is happening, the
 	 * node was restarted, and the former role can be false
-	 * anyway.
+	 * anyway. If raft recovery happens through applier, than
+	 * it may have state.
 	 */
-	assert(req->state == 0);
+	assert(req->is_local == false || req->state == 0);
 	/*
 	 * Vclock is always persisted by some other subsystem - WAL, snapshot.
 	 * It is used only to decide to whom to give the vote during election,
-	 * as a part of the volatile state.
+	 * as a part of the volatile state. If raft recovery happens through
+	 * applier, than it may have vclock.
 	 */
-	assert(req->vclock == NULL);
+	assert(req->is_local == false || req->vclock == NULL);
 	/* Raft is not enabled until recovery is finished. */
 	assert(!raft_is_enabled(raft));
 }
@@ -771,6 +773,7 @@ do_dump_with_vote:
 		req.vote = raft->volatile_vote;
 do_dump:
 		req.term = raft->volatile_term;
+		req.is_local = true;
 		/*
 		 * Skip vclock. It is used only to be sent to network when vote
 		 * for self. It is a job of the vclock owner to persist it
@@ -1091,6 +1094,7 @@ raft_checkpoint_remote(const struct raft *raft, struct raft_msg *req)
 	req->state = raft->state;
 	req->leader_id = raft->leader;
 	req->is_leader_seen = raft_is_leader_seen(raft);
+	req->is_local = false;
 	/*
 	 * Raft does not own vclock, so it always expects it passed externally.
 	 * Vclock is sent out only by candidate instances.
@@ -1107,6 +1111,7 @@ raft_checkpoint_local(const struct raft *raft, struct raft_msg *req)
 	memset(req, 0, sizeof(*req));
 	req->term = raft->term;
 	req->vote = raft->vote;
+	req->is_local = true;
 }
 
 void

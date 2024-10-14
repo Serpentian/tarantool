@@ -124,6 +124,12 @@ struct raft_msg {
 	 * Also is omitted when does not matter (when the message is for disk).
 	 */
 	const struct vclock *vclock;
+	/**
+	 * Whether the message is intended to be used locally or sent
+	 * to another replica. Used to figure out group_id of the xrow
+	 * (either GROUP_DEFAULT or GROUP_LOCAL).
+	 */
+	bool is_local;
 };
 
 typedef void (*raft_broadcast_f)(struct raft *raft, const struct raft_msg *req);

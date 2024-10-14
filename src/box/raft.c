@@ -100,6 +100,7 @@ box_raft_msg_to_request(const struct raft_msg *msg, struct raft_request *req)
 		.is_leader_seen = msg->is_leader_seen,
 		.state = msg->state,
 		.vclock = msg->vclock,
+		.group_id = msg->is_local ? GROUP_LOCAL : GROUP_DEFAULT,
 	};
 }
 
@@ -113,6 +114,7 @@ box_raft_request_to_msg(const struct raft_request *req, struct raft_msg *msg)
 		.is_leader_seen = req->is_leader_seen,
 		.state = req->state,
 		.vclock = req->vclock,
+		.is_local = req->group_id,
 	};
 }
 
