@@ -477,11 +477,7 @@ relay_initial_join(struct iostream *io, uint64_t sync, struct vclock *vclock,
 	/* Freeze a read view in engines. */
 	struct engine_join_ctx ctx;
 	memset(&ctx, 0, sizeof(ctx));
-	/*
-	 * Version is present starting with 2.7.3, 2.8.2, 2.9.1
-	 * All these versions know of additional META stage of initial join.
-	 */
-	ctx.send_meta = replica_version_id > 0;
+	ctx.replica_version_id = replica_version_id;
 	ctx.vclock = vclock;
 	ctx.cursor = cursor;
 	engine_prepare_join_xc(&ctx);

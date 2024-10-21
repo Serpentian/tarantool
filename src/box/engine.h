@@ -354,8 +354,8 @@ struct checkpoint_cursor {
 struct engine_join_ctx {
 	/** Vclock to respond with. */
 	struct vclock *vclock;
-	/** Whether sending JOIN_META stage is required. */
-	bool send_meta;
+	/** The protocol of join heavily relies on the version of the peer. */
+	uint32_t replica_version_id;
 	/** Checkpoint join cursor. */
 	struct checkpoint_cursor *cursor;
 	/** Array of engine join contexts, one per each engine. */

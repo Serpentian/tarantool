@@ -1507,7 +1507,11 @@ memtx_engine_join(struct engine *engine, struct engine_join_ctx *arg,
 
 	/* Respond with vclock and JOIN_META. */
 	send_join_header(stream, arg->vclock);
-	if (arg->send_meta) {
+	/*
+	 * Version is present starting with 2.7.3, 2.8.2, 2.9.1
+	 * All these versions know of additional META stage of initial join.
+	 */
+	if (arg->replica_version_id > 0) {
 		send_join_meta(stream, &raft_req, &synchro_req);
 		struct xrow_header row;
 		/* Mark the beginning of the data stream. */
