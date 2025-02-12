@@ -2016,6 +2016,12 @@ I['replication.timeout'] = format_text([[
     tries to reconnect to the master.
 ]])
 
+
+I['replication.reconnect_timeout'] = format_text([[
+    The timeout (in seconds) between attempts to reconnect to a master
+    in case of connection failure.
+]])
+
 -- }}} replication configuration
 
 -- {{{ roles configuration
