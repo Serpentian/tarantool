@@ -1099,8 +1099,6 @@ format_syslog_header(char *buf, int len, int level,
 
 /** Formatters }}} */
 
-/** {{{ Loggers */
-
 /*
  * From pipe(7):
  * POSIX.1 says that write(2)s of less than PIPE_BUF bytes must be atomic:
@@ -1113,6 +1111,37 @@ format_syslog_header(char *buf, int len, int level,
  */
 enum { SAY_BUF_LEN_MAX = 16 * 1024 };
 static __thread char say_buf[SAY_BUF_LEN_MAX];
+
+/** {{{ Filters */
+
+/**
+ * According to RFC 3164 (part 4.1.3) "The MSG part of the syslog packet MUST
+ * contain visible (printing) characters", so this function replaces all
+ * unprintable characters with spaces for plain syslog format. For JSON format,
+ * we keep all characters as they might be part of valid JSON structure,
+ * non-printable characters (as "\n" e.g.) are properly escaped there.
+ */
+static void
+say_filter_syslog(struct log *log, int total)
+{
+	assert(log->type == SAY_LOGGER_SYSLOG);
+	if (log_format == SF_JSON)
+		return;
+
+	char *src = say_buf;
+	char *dst = say_buf;
+	for (int i = 0; i < total; i++, src++) {
+		/* Replace non-printable characters with spaces */
+		if ((unsigned char)*src < 0x20)
+			*dst++ = ' ';
+		else
+			*dst++ = *src;
+	}
+}
+
+/** Filters }}} */
+
+/** {{{ Loggers */
 
 /**
  * Wrapper over write which ensures, that writes not more than buffer size.
@@ -1224,6 +1253,7 @@ write_to_syslog(struct log *log, int total)
 {
 	assert(log->type == SAY_LOGGER_SYSLOG);
 	assert(total >= 0);
+	say_filter_syslog(log, total);
 	if (log->fd < 0 || safe_write(log->fd, say_buf, total) <= 0) {
 		/*
 		 * Try to reconnect, if write to syslog has
