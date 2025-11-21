@@ -256,14 +256,16 @@ const char *const json_char2escape[256] = {
 bool json_escape_forward_slash;
 TWEAK_BOOL(json_escape_forward_slash);
 
+typedef const char * (*str_escape_char_t)(char c);
+
 int
-json_escape(char *buf, int size, const char *data)
+str_escape(char *buf, int size, const char *data, str_escape_char_t escape_func)
 {
 	int total = 0;
 	int data_len = strlen(data);
 	for (int i = 0; i < data_len; i++) {
 		char c = data[i];
-		const char *escstr = json_escape_char(c);
+		const char *escstr = escape_func(c);
 		if (escstr != NULL) {
 			SNPRINT(total, snprintf, buf, size, "%s", escstr);
 		} else {
@@ -271,6 +273,12 @@ json_escape(char *buf, int size, const char *data)
 		}
 	}
 	return total;
+}
+
+int
+json_escape(char *buf, int size, const char *data)
+{
+	return str_escape(buf, size, data, json_escape_char);
 }
 
 int
