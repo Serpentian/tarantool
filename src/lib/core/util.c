@@ -251,6 +251,50 @@ const char *const json_char2escape[256] = {
 };
 
 /**
+ * Maps a character code to an escaped string or NULL if the character
+ * doesn't need to be escaped when encoded for syslog according to RFC 3164.
+ */
+const char *const syslog_char2escape[256] = {
+	"\\u0000", "\\u0001", "\\u0002", "\\u0003",
+	"\\u0004", "\\u0005", "\\u0006", "\\u0007",
+	"\\b", "\\t", "\\n", "\\u000b",
+	"\\f", "\\r", "\\u000e", "\\u000f",
+	"\\u0010", "\\u0011", "\\u0012", "\\u0013",
+	"\\u0014", "\\u0015", "\\u0016", "\\u0017",
+	"\\u0018", "\\u0019", "\\u001a", "\\u001b",
+	"\\u001c", "\\u001d", "\\u001e", "\\u001f",
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, "\\u007f",
+	"\\u0080", "\\u0081", "\\u0082", "\\u0083",
+	"\\u0084", "\\u0085", "\\u0086", "\\u0087",
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+};
+
+/**
  * If set, json_encode_char() will also escape '/'.
  */
 bool json_escape_forward_slash;
@@ -279,6 +323,18 @@ int
 json_escape(char *buf, int size, const char *data)
 {
 	return str_escape(buf, size, data, json_escape_char);
+}
+
+static inline const char *
+sylog_escape_char(char c)
+{
+	return syslog_char2escape[(unsigned char)c];
+}
+
+int
+syslog_escape(char *buf, int size, const char *data)
+{
+	return str_escape(buf, size, data, syslog_escape_char);
 }
 
 int
