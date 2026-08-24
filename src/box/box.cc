@@ -3730,6 +3730,31 @@ box_return_mp(box_function_ctx_t *ctx, const char *mp, const char *mp_end)
 	return 0;
 }
 
+API_EXPORT int
+box_func_call_by_name(const char *name, uint32_t name_len,
+		      const char *args, const char *args_end,
+		      const char **ret, const char **ret_end)
+{
+	struct func *func = func_by_name(name, name_len);
+	if (func == NULL)
+		return 1;
+	struct port args_port, ret_port;
+	port_msgpack_create(&args_port, args, args_end - args);
+	if (func_call(func, &args_port, &ret_port) != 0) {
+		port_destroy(&args_port);
+		return -1;
+	}
+	uint32_t size;
+	const char *data = port_get_msgpack(&ret_port, &size);
+	port_destroy(&ret_port);
+	port_destroy(&args_port);
+	if (data == NULL)
+		return -1;
+	*ret = data;
+	*ret_end = data + size;
+	return 0;
+}
+
 /* schema_find_id()-like method using only public API */
 API_EXPORT uint32_t
 box_space_id_by_name(const char *name, uint32_t len)

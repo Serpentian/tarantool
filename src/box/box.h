@@ -668,6 +668,34 @@ API_EXPORT int
 box_return_mp(box_function_ctx_t *ctx, const char *mp, const char *mp_end);
 
 /**
+ * Call a function registered in the _func registry by name, with
+ * access checks and setuid handling, passing raw MessagePack args.
+ *
+ * The function is executed with the credentials semantics of a
+ * regular IPROTO_CALL dispatch: access is checked against the
+ * current user, and setuid functions run with the definer's
+ * credentials.
+ *
+ * \param name function name
+ * \param name_len length of \a name
+ * \param args MessagePack array of arguments (MP_ARRAY)
+ * \param args_end end of \a args
+ * \param[out] ret on success is set to the beginning of an MP_ARRAY
+ *        with the function's results. The data is allocated on the
+ *        box region and is valid until the region is truncated,
+ *        which for a stored C procedure caller happens after its
+ *        entry point returns.
+ * \param[out] ret_end end of \a ret
+ * \retval 0 success
+ * \retval 1 function is not registered in _func (no error is set)
+ * \retval -1 error, check box_error_last()
+ */
+API_EXPORT int
+box_func_call_by_name(const char *name, uint32_t name_len,
+		      const char *args, const char *args_end,
+		      const char **ret, const char **ret_end);
+
+/**
  * Find space id by name.
  *
  * This function performs SELECT request to _vspace system space.
