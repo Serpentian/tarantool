@@ -93,6 +93,17 @@ enum replicaset_state replicaset_state = REPLICASET_BOOTSTRAP;
 static void
 replica_delete(struct replica *replica);
 
+/** An applier keeps its replica alive even after it has stopped. */
+static bool
+replica_has_connections(const struct replica *replica)
+{
+	assert(replica->relay != NULL);
+	/* Relay is expected to be active only for connected replicas. */
+	assert(relay_get_state(replica->relay) != RELAY_FOLLOW ||
+	       replica->has_incoming_connection);
+	return replica->has_incoming_connection || replica->applier != NULL;
+}
+
 static int
 replica_compare_by_uuid(const struct replica *a, const struct replica *b)
 {
@@ -514,7 +525,7 @@ static bool
 replica_is_orphan(struct replica *replica)
 {
 	return replica->id == REPLICA_ID_NIL && !replica->anon &&
-	       !replica_has_connections(replica);
+	       replica->txn_ref_count == 0 && !replica_has_connections(replica);
 }
 
 static int
@@ -524,6 +535,7 @@ static struct replica *
 replica_new(void)
 {
 	struct replica *replica = xalloc_object(struct replica);
+	replica->txn_ref_count = 0;
 	replica->relay = relay_new(replica);
 	replica->id = 0;
 	replica->anon = false;
@@ -546,6 +558,7 @@ replica_new(void)
 static void
 replica_delete(struct replica *replica)
 {
+	assert(replica->txn_ref_count == 0);
 	if (replica->relay != NULL)
 		relay_delete(replica->relay);
 	if (replica->applier != NULL)
@@ -652,6 +665,8 @@ replica_clear_id(struct replica *replica)
 		raft_notify_is_leader_seen(box_raft(), false, replica->id);
 	}
 	replica->id = REPLICA_ID_NIL;
+	/* INSTANCE_NAME is still needed for outgoing replication requests. */
+	*replica->name = 0;
 	say_info("removed replica %s", tt_uuid_str(&replica->uuid));
 
 	/*
@@ -678,6 +693,93 @@ replica_clear_id(struct replica *replica)
 	box_broadcast_ballot();
 }
 
+/** State retained until a registration replacement commits or rolls back. */
+struct replica_replace_ctx {
+	/** Previous owner of the registration. */
+	struct replica *old_replica;
+	/** New owner of the registration. */
+	struct replica *new_replica;
+	/** Whether the new owner was anonymous before the replacement. */
+	bool new_was_anon;
+	/** Releases the retained replicas on commit. */
+	struct trigger on_commit;
+	/** Restores the previous registration on rollback. */
+	struct trigger on_rollback;
+};
+
+/** Move a registration without moving the associated connections. */
+static void
+replica_move_registration(struct replica *src, struct replica *dst)
+{
+	uint32_t id = src->id;
+	char name[NODE_NAME_SIZE_MAX];
+	strlcpy(name, src->name, sizeof(name));
+	replica_clear_id(src);
+	replica_set_id(dst, id);
+	replica_set_name(dst, name);
+}
+
+/** Release a reference held by a registration replacement. */
+static void
+replica_txn_unref(struct replica *replica)
+{
+	assert(replica->txn_ref_count > 0);
+	--replica->txn_ref_count;
+	if (replica_is_orphan(replica)) {
+		replica_hash_remove(&replicaset.hash, replica);
+		replica_delete(replica);
+	}
+}
+
+/** Later statements may replace the registration of either replica again. */
+static int
+replica_replace_commit(struct trigger *trigger, void *event)
+{
+	(void)event;
+	struct replica_replace_ctx *ctx =
+		(struct replica_replace_ctx *)trigger->data;
+	replica_txn_unref(ctx->old_replica);
+	replica_txn_unref(ctx->new_replica);
+	return 0;
+}
+
+/** Preserve the original applier and its diagnostic on rollback. */
+static int
+replica_replace_rollback(struct trigger *trigger, void *event)
+{
+	struct replica_replace_ctx *ctx =
+		(struct replica_replace_ctx *)trigger->data;
+	replica_move_registration(ctx->new_replica, ctx->old_replica);
+	ctx->new_replica->anon = ctx->new_was_anon;
+	return replica_replace_commit(trigger, event);
+}
+
+void
+replica_replace_uuid(struct replica *replica, const struct tt_uuid *uuid,
+		     struct txn_stmt *stmt)
+{
+	struct replica_replace_ctx *ctx = xregion_alloc_object(
+		&stmt->txn->region, struct replica_replace_ctx);
+	struct replica *new_replica = replica_by_uuid(uuid);
+	if (new_replica == NULL) {
+		new_replica = replica_new();
+		new_replica->uuid = *uuid;
+		replica_hash_insert(&replicaset.hash, new_replica);
+	}
+	assert(new_replica != replica);
+	assert(new_replica->id == REPLICA_ID_NIL);
+	ctx->old_replica = replica;
+	ctx->new_replica = new_replica;
+	ctx->new_was_anon = new_replica->anon;
+	++replica->txn_ref_count;
+	++new_replica->txn_ref_count;
+	trigger_create(&ctx->on_commit, replica_replace_commit, ctx, NULL);
+	trigger_create(&ctx->on_rollback, replica_replace_rollback, ctx, NULL);
+	txn_stmt_on_commit(stmt, &ctx->on_commit);
+	txn_stmt_on_rollback(stmt, &ctx->on_rollback);
+	replica_move_registration(replica, new_replica);
+}
+
 void
 replicaset_on_health_change(void)
 {
@@ -694,13 +796,11 @@ replica_set_applier(struct replica *replica, struct applier *applier)
 }
 
 bool
-replica_has_connections(const struct replica *replica)
+replica_can_replace(const struct replica *replica)
 {
-	assert(replica->relay != NULL);
-	/* Relay is expected to be active only for connected replicas. */
-	assert(relay_get_state(replica->relay) != RELAY_FOLLOW ||
-	       replica->has_incoming_connection);
-	return replica->has_incoming_connection || replica->applier != NULL;
+	return !replica->has_incoming_connection &&
+	       (replica->applier == NULL ||
+		replica->applier->state == APPLIER_STOPPED);
 }
 
 /** A helper to track applier health on its state change. */

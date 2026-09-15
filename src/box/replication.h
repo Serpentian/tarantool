@@ -42,6 +42,8 @@
 #include "vclock/vclock.h"
 #include "latch.h"
 
+struct txn_stmt;
+
 /**
  * @module replication - global state of multi-master
  * replicated database.
@@ -435,6 +437,8 @@ extern struct replicaset replicaset;
 struct replica {
 	/** Link in replicaset::hash. */
 	rb_node(struct replica) in_hash;
+	/** References held by transactions replacing the registration. */
+	unsigned txn_ref_count;
 	/**
 	 * Replica UUID or nil if the replica or nil if the
 	 * applier has not received from the master yet.
@@ -561,20 +565,18 @@ replica_set_id(struct replica *replica, uint32_t id);
 void
 replica_set_name(struct replica *replica, const char *name);
 
-/*
- * Clear the numeric replica-set-local id of a replica.
- *
- * The replica is removed from the replication vector clock.
- */
+/** Clear the registration (ID and name), preserving the vclock component. */
 void
 replica_clear_id(struct replica *replica);
 
-/**
- * See if the replica still has active connections or might be trying to make
- * new ones.
- */
+/** Replace a replica's registration, restoring it on statement rollback. */
+void
+replica_replace_uuid(struct replica *replica, const struct tt_uuid *uuid,
+		     struct txn_stmt *stmt);
+
+/** Whether another UUID may take this replica's registration. */
 bool
-replica_has_connections(const struct replica *replica);
+replica_can_replace(const struct replica *replica);
 
 /**
  * Collects garbage of a replica that is gone for a while: removes associated

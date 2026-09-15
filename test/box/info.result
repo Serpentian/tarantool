@@ -94,6 +94,7 @@ t
   - replicaset
   - replication
   - replication_anon
+  - replication_upstreams
   - ro
   - schema_version
   - signature

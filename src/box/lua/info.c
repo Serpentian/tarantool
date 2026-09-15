@@ -244,6 +244,39 @@ lbox_info_replication(struct lua_State *L)
 	return 1;
 }
 
+/** Also expose upstreams that no longer have a _cluster registration. */
+static int
+lbox_info_replication_upstreams(struct lua_State *L)
+{
+	lua_newtable(L);
+	luaL_setarrayhint(L, -1);
+	if (replicaset.applier.total == 0)
+		return 1;
+	int index = 0;
+	replicaset_foreach(replica) {
+		if (replica->applier == NULL)
+			continue;
+		lbox_pushapplier(L, replica->applier);
+		luaT_pushuuidstr(L, &replica->uuid);
+		lua_setfield(L, -2, "uuid");
+		if (replica->id != REPLICA_ID_NIL) {
+			lua_pushinteger(L, replica->id);
+			lua_setfield(L, -2, "id");
+		}
+		if (*replica->name != 0) {
+			lua_pushstring(L, replica->name);
+			lua_setfield(L, -2, "name");
+		}
+		lua_rawseti(L, -2, ++index);
+	}
+	struct replica *replica;
+	rlist_foreach_entry(replica, &replicaset.anon, in_anon) {
+		lbox_pushapplier(L, replica->applier);
+		lua_rawseti(L, -2, ++index);
+	}
+	return 1;
+}
+
 static int
 lbox_info_replication_anon_call(struct lua_State *L)
 {
@@ -844,6 +877,7 @@ static const struct luaL_Reg lbox_info_dynamic_meta[] = {
 	{"ro_reason", lbox_info_ro_reason},
 	{"replication", lbox_info_replication},
 	{"replication_anon", lbox_info_replication_anon},
+	{"replication_upstreams", lbox_info_replication_upstreams},
 	{"replicaset", lbox_info_replicaset},
 	{"status", lbox_info_status},
 	{"uptime", lbox_info_uptime},

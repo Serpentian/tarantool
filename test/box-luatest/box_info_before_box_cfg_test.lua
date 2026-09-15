@@ -25,4 +25,6 @@ g.test_gh_9173_box_info_errors = function()
                               box.info.gc)
     t.assert_equals(box.info.replication_anon(), {},
                     'Works ok without box.cfg{}')
+    t.assert_equals(box.info.replication_upstreams, {},
+                    'Works ok without box.cfg{}')
 end
