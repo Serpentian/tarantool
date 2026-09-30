@@ -755,6 +755,22 @@ replica_clear_applier(struct replica *replica)
 	replica_update_applier_health(replica);
 }
 
+/** Preserve the stopped upstream's diagnostic on its replacement. */
+static void
+replica_rebind_stopped_applier(struct replica *src, struct replica *dst)
+{
+	struct applier *applier = src->applier;
+	if (src->id != REPLICA_ID_NIL || dst->applier != NULL ||
+	    applier == NULL || applier->state != APPLIER_STOPPED)
+		return;
+	assert(src->applier_sync_state == APPLIER_STOPPED);
+	assert(dst->applier_sync_state == APPLIER_DISCONNECTED);
+	replica_clear_applier(src);
+	src->applier_sync_state = APPLIER_DISCONNECTED;
+	dst->applier_sync_state = APPLIER_STOPPED;
+	replica_set_applier(dst, applier);
+}
+
 /** State retained until a UUID replacement commits or rolls back. */
 struct replica_replace_ctx {
 	/** Previous owner of the registration. */
@@ -801,6 +817,8 @@ replica_replace_commit(struct trigger *trigger, void *event)
 	(void)event;
 	struct replica_replace_ctx *ctx =
 		(struct replica_replace_ctx *)trigger->data;
+	/* Reconfiguration during WAL write may replace either applier. */
+	replica_rebind_stopped_applier(ctx->old_replica, ctx->new_replica);
 	replica_unref(ctx->old_replica);
 	replica_unref(ctx->new_replica);
 	return 0;
