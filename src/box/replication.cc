@@ -710,7 +710,9 @@ replica_set_applier(struct replica *replica, struct applier *applier)
 bool
 replica_can_replace(const struct replica *replica)
 {
-	return !replica_has_connections(replica);
+	return !replica->has_incoming_connection &&
+	       (replica->applier == NULL ||
+		replica->applier->state == APPLIER_STOPPED);
 }
 
 /** A helper to track applier health on its state change. */
