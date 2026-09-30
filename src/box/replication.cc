@@ -513,7 +513,8 @@ replica_check_id(uint32_t replica_id)
 static bool
 replica_is_orphan(struct replica *replica)
 {
-	return replica->id == REPLICA_ID_NIL && !replica->anon &&
+	return replica->registration_refs == 0 &&
+	       replica->id == REPLICA_ID_NIL && !replica->anon &&
 	       !replica_has_connections(replica);
 }
 
@@ -526,6 +527,7 @@ replica_new(void)
 	struct replica *replica = xalloc_object(struct replica);
 	replica->relay = relay_new(replica);
 	replica->id = 0;
+	replica->registration_refs = 0;
 	replica->anon = false;
 	replica->uuid = uuid_nil;
 	*replica->name = 0;
@@ -546,6 +548,7 @@ replica_new(void)
 static void
 replica_delete(struct replica *replica)
 {
+	assert(replica->registration_refs == 0);
 	if (replica->relay != NULL)
 		relay_delete(replica->relay);
 	if (replica->applier != NULL)
@@ -741,6 +744,97 @@ replica_clear_applier(struct replica *replica)
 	replica->applier = NULL;
 	trigger_clear(&replica->on_applier_state);
 	replica_update_applier_health(replica);
+}
+
+/** State retained until a UUID replacement commits or rolls back. */
+struct replica_replace_ctx {
+	/** Previous owner of the registration. */
+	struct replica *old_replica;
+	/** New owner of the registration. */
+	struct replica *new_replica;
+	/** Whether the new owner was anonymous before the replacement. */
+	bool new_was_anon;
+	/** Releases the retained replicas on commit. */
+	struct trigger on_commit;
+	/** Restores the previous registration on rollback. */
+	struct trigger on_rollback;
+};
+
+/** Move a registration without moving the associated connections. */
+static void
+replica_move_registration(struct replica *src, struct replica *dst)
+{
+	uint32_t id = src->id;
+	char name[NODE_NAME_SIZE_MAX];
+	strlcpy(name, src->name, sizeof(name));
+	replica_set_name(src, "");
+	replica_clear_id(src);
+	replica_set_id(dst, id);
+	replica_set_name(dst, name);
+}
+
+/** Release a reference held by a UUID replacement. */
+static void
+replica_unref(struct replica *replica)
+{
+	assert(replica->registration_refs > 0);
+	--replica->registration_refs;
+	if (replica_is_orphan(replica)) {
+		replica_hash_remove(&replicaset.hash, replica);
+		replica_delete(replica);
+	}
+}
+
+/** Later statements may replace either registration again. */
+static int
+replica_replace_commit(struct trigger *trigger, void *event)
+{
+	(void)event;
+	struct replica_replace_ctx *ctx =
+		(struct replica_replace_ctx *)trigger->data;
+	replica_unref(ctx->old_replica);
+	replica_unref(ctx->new_replica);
+	return 0;
+}
+
+/** Preserve both replicas' connections when restoring the registration. */
+static int
+replica_replace_rollback(struct trigger *trigger, void *event)
+{
+	(void)event;
+	struct replica_replace_ctx *ctx =
+		(struct replica_replace_ctx *)trigger->data;
+	replica_move_registration(ctx->new_replica, ctx->old_replica);
+	ctx->new_replica->anon = ctx->new_was_anon;
+	replica_unref(ctx->old_replica);
+	replica_unref(ctx->new_replica);
+	return 0;
+}
+
+void
+replica_replace_uuid(struct replica *replica, const struct tt_uuid *uuid,
+		     struct txn_stmt *stmt)
+{
+	struct replica_replace_ctx *ctx = xregion_alloc_object(
+		&stmt->txn->region, struct replica_replace_ctx);
+	struct replica *new_replica = replica_by_uuid(uuid);
+	if (new_replica == NULL) {
+		new_replica = replica_new();
+		new_replica->uuid = *uuid;
+		replica_hash_insert(&replicaset.hash, new_replica);
+	}
+	assert(new_replica != replica);
+	assert(new_replica->id == REPLICA_ID_NIL);
+	ctx->old_replica = replica;
+	ctx->new_replica = new_replica;
+	ctx->new_was_anon = new_replica->anon;
+	++replica->registration_refs;
+	++new_replica->registration_refs;
+	trigger_create(&ctx->on_commit, replica_replace_commit, ctx, NULL);
+	trigger_create(&ctx->on_rollback, replica_replace_rollback, ctx, NULL);
+	txn_stmt_on_commit(stmt, &ctx->on_commit);
+	txn_stmt_on_rollback(stmt, &ctx->on_rollback);
+	replica_move_registration(replica, new_replica);
 }
 
 static void

@@ -447,6 +447,8 @@ struct replica {
 	 * registered in the _cluster space yet.
 	 */
 	uint32_t id;
+	/** References held by pending registration changes. */
+	unsigned int registration_refs;
 	/**
 	 * Whether this is an anonymous replica, e.g. a read-only
 	 * replica that doesn't have an id and isn't present in
@@ -568,6 +570,13 @@ replica_set_name(struct replica *replica, const char *name);
  */
 void
 replica_clear_id(struct replica *replica);
+
+struct txn_stmt;
+
+/** Replace a replica's UUID, restoring its registration on rollback. */
+void
+replica_replace_uuid(struct replica *replica, const struct tt_uuid *uuid,
+		     struct txn_stmt *stmt);
 
 /**
  * See if the replica still has active connections or might be trying to make
