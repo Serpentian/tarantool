@@ -4754,7 +4754,7 @@ on_replace_dd_cluster_set_uuid(struct replica *replica,
 			       const struct replica_def *new_def,
 			       struct txn_stmt *stmt)
 {
-	if (replica_has_connections(replica)) {
+	if (!replica_can_replace(replica)) {
 		diag_set(ClientError, ER_UNSUPPORTED, "Replica",
 			 "UUID update when the old replica is still here");
 		return -1;

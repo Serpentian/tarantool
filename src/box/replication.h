@@ -578,12 +578,9 @@ void
 replica_replace_uuid(struct replica *replica, const struct tt_uuid *uuid,
 		     struct txn_stmt *stmt);
 
-/**
- * See if the replica still has active connections or might be trying to make
- * new ones.
- */
+/** Whether another UUID may take this replica's registration. */
 bool
-replica_has_connections(const struct replica *replica);
+replica_can_replace(const struct replica *replica);
 
 /**
  * Collects garbage of a replica that is gone for a while: removes associated

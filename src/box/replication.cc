@@ -93,6 +93,17 @@ enum replicaset_state replicaset_state = REPLICASET_BOOTSTRAP;
 static void
 replica_delete(struct replica *replica);
 
+/** An applier keeps its replica alive regardless of its state. */
+static bool
+replica_has_connections(const struct replica *replica)
+{
+	assert(replica->relay != NULL);
+	/* Relay is expected to be active only for connected replicas. */
+	assert(relay_get_state(replica->relay) != RELAY_FOLLOW ||
+	       replica->has_incoming_connection);
+	return replica->has_incoming_connection || replica->applier != NULL;
+}
+
 static int
 replica_compare_by_uuid(const struct replica *a, const struct replica *b)
 {
@@ -697,13 +708,9 @@ replica_set_applier(struct replica *replica, struct applier *applier)
 }
 
 bool
-replica_has_connections(const struct replica *replica)
+replica_can_replace(const struct replica *replica)
 {
-	assert(replica->relay != NULL);
-	/* Relay is expected to be active only for connected replicas. */
-	assert(relay_get_state(replica->relay) != RELAY_FOLLOW ||
-	       replica->has_incoming_connection);
-	return replica->has_incoming_connection || replica->applier != NULL;
+	return !replica_has_connections(replica);
 }
 
 /** A helper to track applier health on its state change. */
